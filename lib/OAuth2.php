@@ -578,7 +578,7 @@ class OAuth2 {
     if (!isset($inputData)) {
       	$inputData = ($_SERVER['REQUEST_METHOD'] == 'POST') ? $_POST : $_GET;
     }
-    
+
     // Basic authorization header
     $authHeaders = isset($authHeaders) ? $authHeaders : $this->getAuthorizationHeader();
     
@@ -636,7 +636,7 @@ class OAuth2 {
 
         $stored = $this->storage->checkUserCredentials($client[0], $input["username"], $input["password"]);
 
-        if ($stored === FALSE)
+        if ($stored === NULL)
           throw new OAuth2ServerException(self::HTTP_BAD_REQUEST, self::ERROR_INVALID_GRANT);
         break;
         
@@ -689,7 +689,7 @@ class OAuth2 {
         $uri = filter_var($input["grant_type"], FILTER_VALIDATE_URL);
         $stored = $this->storage->checkGrantExtension($uri, $inputData, $authHeaders);
         
-        if ($stored === FALSE) 
+        if ($stored === NULL) 
           throw new OAuth2ServerException(self::HTTP_BAD_REQUEST, self::ERROR_INVALID_GRANT);
         break;
         
@@ -955,12 +955,19 @@ class OAuth2 {
    */
   protected function createAccessToken($client_id, $user_id, $scope=NULL) {
   	
-    $token = array(
+    if ($this->storage instanceof IOAuth2AccessTokenArray)
+      $token = $this->storage->createAccessTokenResponseArray();
+    else
+      $token = array();
+  	
+    $token += array(
       "access_token" => $this->genAccessToken(),
       "expires_in"   => $this->getVariable(self::CONFIG_ACCESS_LIFETIME),
-      "token_type"   => $this->getVariable(self::CONFIG_TOKEN_TYPE),
-      "scope"        => $scope
+      "token_type"   => $this->getVariable(self::CONFIG_TOKEN_TYPE)
     );
+    
+    if($scope)
+      $token["scope"] = $scope;
 
     $this->storage->setAccessToken($token["access_token"], $client_id, $user_id, time() + $this->getVariable(self::CONFIG_ACCESS_LIFETIME), $scope);
 
@@ -970,9 +977,10 @@ class OAuth2 {
       $this->storage->setRefreshToken($token["refresh_token"], $client_id, $user_id, time() + $this->getVariable(self::CONFIG_REFRESH_LIFETIME), $scope);
       
       // If we've granted a new refresh token, expire the old one
-      if ($this->oldRefreshToken)
+      if ($this->oldRefreshToken) {
         $this->storage->unsetRefreshToken($this->oldRefreshToken);
         unset($this->oldRefreshToken);
+      }
     }
 
     return $token;
@@ -1012,7 +1020,10 @@ class OAuth2 {
    * @ingroup oauth2_section_4
    */
   protected function genAccessToken() {
-    return md5(base64_encode(pack('N6', mt_rand(), mt_rand(), mt_rand(), mt_rand(), microtime(true), uniqid(mt_rand(), true))));
+    if ($this->storage instanceof IOAuth2TokenGeneration)
+      return $this->storage->genAccessToken();
+    else
+      return md5(base64_encode(pack('N6', mt_rand(), mt_rand(), mt_rand(), mt_rand(), microtime(true), uniqid(mt_rand(), true))));
   }
 
   /**
@@ -1027,7 +1038,10 @@ class OAuth2 {
    * @ingroup oauth2_section_4
    */
   protected function genAuthCode() {
-    return md5(base64_encode(pack('N6', mt_rand(), mt_rand(), mt_rand(), mt_rand(), microtime(true), uniqid(mt_rand(), true))));
+    if ($this->storage instanceof IOAuth2TokenGeneration)
+      return $this->storage->genAuthCode();
+    else
+      return md5(base64_encode(pack('N6', mt_rand(), mt_rand(), mt_rand(), mt_rand(), microtime(true), uniqid(mt_rand(), true))));
   }
 
   /**
@@ -1046,10 +1060,14 @@ class OAuth2 {
    * @ingroup oauth2_section_2
    */
   protected function getAuthorizationHeader() {
-    return array(
-      'PHP_AUTH_USER' => $_SERVER['PHP_AUTH_USER'],
-      'PHP_AUTH_PW'   => $_SERVER['PHP_AUTH_PW']    
-    );
+    if(array_key_exists('PHP_AUTH_USER', $_SERVER)) {
+      return array(
+        'PHP_AUTH_USER' => $_SERVER['PHP_AUTH_USER'],
+        'PHP_AUTH_PW'   => $_SERVER['PHP_AUTH_PW']    
+      );
+    }else{
+      return array();
+    }
   }
 
   /**
