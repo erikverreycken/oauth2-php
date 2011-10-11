@@ -435,7 +435,7 @@ class OAuth2 {
       throw new OAuth2AuthenticateException(self::HTTP_UNAUTHORIZED, $tokenType, $realm, self::ERROR_INVALID_GRANT, 'Malformed token (missing "expires" or "client_id")', $scope);
       
     // Check token expiration (expires is a mandatory paramter)
-    if (isset($token["expires"]) && time() > $token["expires"])
+    if (isset($token["expires"]) && time() > $token["expires"] && $token["expires"] > 0)
       throw new OAuth2AuthenticateException(self::HTTP_UNAUTHORIZED, $tokenType, $realm, self::ERROR_INVALID_GRANT, 'The access token provided has expired.', $scope);
 
     // Check scope, if provided
@@ -665,11 +665,11 @@ class OAuth2 {
         if ($stored === NULL || $client[0] != $stored["client_id"])
           throw new OAuth2ServerException(self::HTTP_BAD_REQUEST, self::ERROR_INVALID_GRANT, 'Invalid refresh token');
 
-        if ($stored["expires"] < time())
+        if ($stored["expires"] < time() && $stored["expires"] > 0)
           throw new OAuth2ServerException(self::HTTP_BAD_REQUEST, self::ERROR_INVALID_GRANT, 'Refresh token has expired');
 
         // store the refresh token locally so we can delete it when a new refresh token is generated
-        $this->oldRefreshToken = $stored["refresh_token"];
+        $this->oldRefreshToken = $input["refresh_token"];
         break;
         
       case self::GRANT_TYPE_IMPLICIT:
@@ -706,6 +706,9 @@ class OAuth2 {
 
     $user_id = isset($stored['user_id']) ? $stored['user_id'] : null;
     $token = $this->createAccessToken($client[0], $user_id, $stored['scope']);
+
+    if ($this->storage instanceof IOAuth2GrantSucceededCallback)
+      $this->storage->grantSucceeded($input["grant_type"], $token);
 
     // Send response
     $this->sendJsonHeaders();
@@ -789,7 +792,7 @@ class OAuth2 {
     if ($stored === FALSE) {
       throw new OAuth2ServerException(self::HTTP_BAD_REQUEST, self::ERROR_INVALID_CLIENT);
     }
-    
+
     // Make sure a valid redirect_uri was supplied. If specified, it must match the stored URI.
     // @see http://tools.ietf.org/html/draft-ietf-oauth-v2-20#section-3.1.2
     // @see http://tools.ietf.org/html/draft-ietf-oauth-v2-20#section-4.1.2.1
@@ -857,15 +860,19 @@ class OAuth2 {
     
     // We repeat this, because we need to re-validate. In theory, this could be POSTed
     // by a 3rd-party (because we are not internally enforcing NONCEs, etc)
-    $params = $this->getAuthorizeParams($params);
-    
+    // 
+    // I don't think this is a good idea here. The verification should have happened already before
+    // calling this method. On our server, we have separate authentication that prevents unknown
+    // clients from running this method. Disabling this check here. -aaronpk
+    // $params = $this->getAuthorizeParams($params);
+
     $params += array(
       'scope' => NULL,
       'state' => NULL,
     );
     extract($params);
 
-    if ($state !== NULL)
+    if ($state)
       $result["query"]["state"] = $state;
 
     if ($is_authorized === FALSE) {
@@ -955,12 +962,7 @@ class OAuth2 {
    */
   protected function createAccessToken($client_id, $user_id, $scope=NULL) {
   	
-    if ($this->storage instanceof IOAuth2AccessTokenArray)
-      $token = $this->storage->createAccessTokenResponseArray();
-    else
-      $token = array();
-  	
-    $token += array(
+    $token = array(
       "access_token" => $this->genAccessToken(),
       "expires_in"   => $this->getVariable(self::CONFIG_ACCESS_LIFETIME),
       "token_type"   => $this->getVariable(self::CONFIG_TOKEN_TYPE)
